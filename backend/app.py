@@ -101,35 +101,54 @@ elif page == "Attendance":
 
         if st.button("Mark Attendance"):
             if uploaded_file:
-                image = face_recognition.load_image_file(uploaded_file)
-                encodings = face_recognition.face_encodings(image)
+                # Convert uploaded file to numpy array
+                file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+                image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-                if not encodings:
-                    st.error("No face found")
-                else:
-                    face_encoding = encodings[0]
-
-                    conn = sqlite3.connect('attendance.db')
-                    c = conn.cursor()
-                    c.execute("SELECT id, name, encoding FROM users")
-                    users = c.fetchall()
-
-                    known_encodings = [decode_face(user[2]) for user in users]
-
-                    matches = face_recognition.compare_faces(known_encodings, face_encoding)
-
-                    if True in matches:
-                        user_id = users[matches.index(True)][0]
-                        now = datetime.now()
-                        timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
-
-                        c.execute("INSERT INTO attendance (user_id, timestamp) VALUES (?, ?)", (user_id, timestamp))
-                        conn.commit()
+                # Check if face is detected
+                try:
+                    faces = DeepFace.extract_faces(img_path=image, enforce_detection=True)
+                    if faces:
+                        # Get all registered users
+                        conn = sqlite3.connect('attendance.db')
+                        c = conn.cursor()
+                        c.execute("SELECT id, name, image_path FROM users")
+                        users = c.fetchall()
                         conn.close()
 
-                        st.success("Attendance marked")
+                        if not users:
+                            st.error("No registered users found")
+                            return
+
+                        # Try to verify against each user
+                        recognized_user = None
+                        for user_id, name, image_path in users:
+                            try:
+                                result = DeepFace.verify(img1_path=image_path, img2_path=image, enforce_detection=False)
+                                if result['verified']:
+                                    recognized_user = (user_id, name)
+                                    break
+                            except Exception:
+                                continue
+
+                        if recognized_user:
+                            user_id, name = recognized_user
+                            now = datetime.now()
+                            timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
+
+                            conn = sqlite3.connect('attendance.db')
+                            c = conn.cursor()
+                            c.execute("INSERT INTO attendance (user_id, timestamp) VALUES (?, ?)", (user_id, timestamp))
+                            conn.commit()
+                            conn.close()
+
+                            st.success(f"Attendance marked for {name}")
+                        else:
+                            st.error("Face not recognized")
                     else:
-                        st.error("Face not recognized")
+                        st.error("No face found")
+                except Exception as e:
+                    st.error(f"Face detection error: {str(e)}")
             else:
                 st.error("Please provide an image")
     else:

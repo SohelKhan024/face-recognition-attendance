@@ -1,0 +1,24 @@
+# TODO List for Face Recognition Attendance System
+
+- [x] Create backend/requirements.txt
+- [x] Create backend/app.py with Flask backend code, including admin login endpoint
+- [x] Create frontend/package.json for React app
+- [x] Create frontend/public/index.html
+- [x] Create frontend/src/index.js
+- [x] Create frontend/src/index.css (empty)
+- [x] Create frontend/src/App.js
+- [x] Create frontend/src/Login.js
+- [x] Create frontend/src/Register.js
+- [x] Create frontend/src/Attendance.js
+- [x] Create frontend/src/Camera.js
+- [x] Update TODO.md to mark completed steps
+- [x] Add database table creation in backend/app.py
+- [x] Add quote "Made with ❤️ from Sohel" at the bottom of the website in frontend
+- [x] Install backend dependencies
+- [x] Install frontend dependencies
+- [ ] Convert backend from Streamlit to Flask API
+- [ ] Update backend/requirements.txt for Flask
+- [ ] Rewrite backend/app.py with Flask endpoints
+- [ ] Install new backend dependencies
+- [ ] Run backend server
+- [ ] Run frontend server

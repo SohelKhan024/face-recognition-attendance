@@ -1,10 +1,11 @@
 import streamlit as st
 import sqlite3
-import face_recognition
+from deepface import DeepFace
 import cv2
 import numpy as np
 from datetime import datetime
 import pandas as pd
+import os
 
 # Database setup
 def init_db():
@@ -13,7 +14,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY,
                     name TEXT NOT NULL,
-                    encoding TEXT NOT NULL
+                    image_path TEXT NOT NULL
                 )''')
     c.execute('''CREATE TABLE IF NOT EXISTS attendance (
                     id INTEGER PRIMARY KEY,
@@ -24,29 +25,17 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Create images directory
+if not os.path.exists('user_images'):
+    os.makedirs('user_images')
+
 init_db()
 
 # Helper functions
-def encode_face(image):
-    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    face_locations = face_recognition.face_locations(rgb_image)
-    if face_locations:
-        face_encoding = face_recognition.face_encodings(rgb_image, face_locations)[0]
-        return face_encoding.tolist()
-    return None
-
-def decode_face(encoding_str):
-    return np.array([float(x) for x in encoding_str.split(',')])
-
-def recognize_face(image, known_encodings):
-    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    face_locations = face_recognition.face_locations(rgb_image)
-    if face_locations:
-        face_encoding = face_recognition.face_encodings(rgb_image, face_locations)[0]
-        matches = face_recognition.compare_faces(known_encodings, face_encoding)
-        if True in matches:
-            return matches.index(True)
-    return None
+def save_user_image(image, user_id):
+    image_path = f"user_images/user_{user_id}.jpg"
+    cv2.imwrite(image_path, image)
+    return image_path
 
 # Streamlit app
 st.title("Face Recognition Attendance System")
@@ -74,22 +63,32 @@ elif page == "Register":
 
         if st.button("Register"):
             if name and uploaded_file:
-                image = face_recognition.load_image_file(uploaded_file)
-                encodings = face_recognition.face_encodings(image)
+                # Convert uploaded file to numpy array
+                file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+                image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-                if not encodings:
-                    st.error("No face detected")
-                else:
-                    encoding = encodings[0]
-                    encoding_str = ','.join(map(str, encoding.tolist()))
+                # Check if face is detected
+                try:
+                    faces = DeepFace.extract_faces(img_path=image, enforce_detection=True)
+                    if faces:
+                        # Save user to database
+                        conn = sqlite3.connect('attendance.db')
+                        c = conn.cursor()
+                        c.execute("INSERT INTO users (name, image_path) VALUES (?, ?)", (name, "temp"))
+                        user_id = c.lastrowid
 
-                    conn = sqlite3.connect('attendance.db')
-                    c = conn.cursor()
-                    c.execute("INSERT INTO users (name, encoding) VALUES (?, ?)", (name, encoding_str))
-                    conn.commit()
-                    conn.close()
+                        # Save image
+                        image_path = save_user_image(image, user_id)
+                        c.execute("UPDATE users SET image_path = ? WHERE id = ?", (image_path, user_id))
 
-                    st.success("User registered successfully")
+                        conn.commit()
+                        conn.close()
+
+                        st.success("User registered successfully")
+                    else:
+                        st.error("No face detected")
+                except Exception as e:
+                    st.error(f"Face detection error: {str(e)}")
             else:
                 st.error("Please enter name and provide an image")
     else:

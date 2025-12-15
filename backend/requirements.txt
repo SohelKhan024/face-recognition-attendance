@@ -1,5 +1,7 @@
-Flask
-opencv-python
-face-recognition
+streamlit
+opencv-python-headless
+deepface
 numpy
 Pillow
+pandas
+tensorflow

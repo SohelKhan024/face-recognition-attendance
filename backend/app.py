@@ -1,11 +1,18 @@
 import streamlit as st
 import sqlite3
-from deepface import DeepFace
 import cv2
 import numpy as np
 from datetime import datetime
 import pandas as pd
 import os
+import urllib.request
+
+# Download Haar cascade if not present
+if not os.path.exists('haarcascade_frontalface_default.xml'):
+    try:
+        urllib.request.urlretrieve('https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml', 'haarcascade_frontalface_default.xml')
+    except:
+        pass  # Continue if download fails
 
 # Database setup
 def init_db():
@@ -14,7 +21,8 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY,
                     name TEXT NOT NULL,
-                    image_path TEXT NOT NULL
+                    image_path TEXT NOT NULL,
+                    embedding TEXT NOT NULL
                 )''')
     c.execute('''CREATE TABLE IF NOT EXISTS attendance (
                     id INTEGER PRIMARY KEY,
@@ -36,6 +44,30 @@ def save_user_image(image, user_id):
     image_path = f"user_images/user_{user_id}.jpg"
     cv2.imwrite(image_path, image)
     return image_path
+
+def extract_face_embedding(image):
+    """Extract face embedding using OpenCV and basic image processing"""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Use Haar cascade for face detection
+    face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
+    if len(faces) == 0:
+        return None
+
+    # Take the first face found
+    x, y, w, h = faces[0]
+    face = gray[y:y+h, x:x+w]
+
+    # Resize to standard size
+    face_resized = cv2.resize(face, (100, 100))
+
+    # Flatten to create a simple embedding
+    embedding = face_resized.flatten().astype(np.float32)
+    embedding = embedding / np.linalg.norm(embedding)  # Normalize
+
+    return embedding
 
 # Streamlit app
 st.title("Face Recognition Attendance System")
@@ -67,19 +99,29 @@ elif page == "Register":
                 file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
                 image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-                # Check if face is detected
+                # Check if face is detected and extract embedding
                 try:
-                    faces = DeepFace.extract_faces(img_path=image, enforce_detection=True)
-                    if faces:
+                    embedding = extract_face_embedding(image)
+                    if embedding is not None:
                         # Save user to database
                         conn = sqlite3.connect('attendance.db')
                         c = conn.cursor()
-                        c.execute("INSERT INTO users (name, image_path) VALUES (?, ?)", (name, "temp"))
+
+                        # Save image first
+                        image_path = save_user_image(image, 0)  # Temporary ID
+                        embedding_str = ','.join(map(str, embedding.tolist()))
+
+                        c.execute("INSERT INTO users (name, image_path, embedding) VALUES (?, ?, ?)",
+                                (name, image_path, embedding_str))
                         user_id = c.lastrowid
 
-                        # Save image
-                        image_path = save_user_image(image, user_id)
-                        c.execute("UPDATE users SET image_path = ? WHERE id = ?", (image_path, user_id))
+                        # Update image path with correct user ID
+                        correct_image_path = save_user_image(image, user_id)
+                        c.execute("UPDATE users SET image_path = ? WHERE id = ?", (correct_image_path, user_id))
+
+                        # Remove temporary image
+                        if os.path.exists(image_path):
+                            os.remove(image_path)
 
                         conn.commit()
                         conn.close()
@@ -105,29 +147,34 @@ elif page == "Attendance":
                 file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
                 image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-                # Check if face is detected
+                # Check if face is detected and recognize user
                 try:
-                    faces = DeepFace.extract_faces(img_path=image, enforce_detection=True)
-                    if faces:
+                    current_embedding = extract_face_embedding(image)
+                    if current_embedding is not None:
                         # Get all registered users
                         conn = sqlite3.connect('attendance.db')
                         c = conn.cursor()
-                        c.execute("SELECT id, name, image_path FROM users")
+                        c.execute("SELECT id, name, embedding FROM users")
                         users = c.fetchall()
                         conn.close()
 
                         if not users:
                             st.error("No registered users found")
-                            return
 
-                        # Try to verify against each user
+                        # Try to match against each user using cosine similarity
                         recognized_user = None
-                        for user_id, name, image_path in users:
+                        best_similarity = 0.0
+
+                        for user_id, name, embedding_str in users:
                             try:
-                                result = DeepFace.verify(img1_path=image_path, img2_path=image, enforce_detection=False)
-                                if result['verified']:
+                                stored_embedding = np.array([float(x) for x in embedding_str.split(',')])
+                                similarity = np.dot(current_embedding, stored_embedding) / (
+                                    np.linalg.norm(current_embedding) * np.linalg.norm(stored_embedding)
+                                )
+
+                                if similarity > 0.8 and similarity > best_similarity:  # Threshold for recognition
                                     recognized_user = (user_id, name)
-                                    break
+                                    best_similarity = similarity
                             except Exception:
                                 continue
 
